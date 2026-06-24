@@ -7,6 +7,7 @@ import pyterrier as pt
 from pyterrier._evaluation._exec_tree import TransformerRadixNode, TransformerRadixTree, decompose_pipelines
 from pyterrier._evaluation._trie import RadixTree
 from pyterrier._ops import Compose
+from pyterrier.schematic import radix_tree_schematic
 
 
 
@@ -165,6 +166,44 @@ class TestRadixTreeWithTransformers(unittest.TestCase):
         self.assertEqual(len(children), 1)
         self.assertEqual(children[0][0], (BM25,))
         assert children[0][1] == 1
+
+    def test_terminal_transformer_adds_output_branch_in_schematic(self):
+        tree = TransformerRadixTree()
+        vaswani = pt.datasets.get_dataset("vaswani")
+        index = vaswani.get_index()
+        TF_IDF = pt.terrier.Retriever(index, wmodel="TF_IDF")
+        BM25 = pt.terrier.Retriever(index, wmodel="BM25")
+        pipelines = [TF_IDF, TF_IDF >> BM25]
+        for sysid, pipeline in enumerate(decompose_pipelines(pipelines)):
+            tree.insert(tuple(pipeline), sysid)
+
+        schematic = radix_tree_schematic(tree)
+        self.assertEqual(len(schematic['nodes']), 1)
+        root = schematic['nodes'][0]
+        self.assertEqual(root.get('mode'), 'branch')
+        self.assertEqual(len(root['children']), 2)
+        self.assertTrue(any(child['self']['type'] == 'output' for child in root['children']))
+        self.assertTrue(any(child['self'].get('label') == 'BM25' for child in root['children']))
+
+    def test_terminal_pipeline_adds_output_branch_in_schematic(self):
+        tree = TransformerRadixTree()
+        vaswani = pt.datasets.get_dataset("vaswani")
+        index = vaswani.get_index()
+        TF_IDF = pt.terrier.Retriever(index, wmodel="TF_IDF")
+        BM25 = pt.terrier.Retriever(index, wmodel="BM25")
+        PL2 = pt.terrier.Retriever(index, wmodel="PL2")
+        pipelines = [TF_IDF >> BM25, TF_IDF >> BM25 >> PL2]
+        for sysid, pipeline in enumerate(decompose_pipelines(pipelines)):
+            tree.insert(tuple(pipeline), sysid)
+
+        schematic = radix_tree_schematic(tree)
+        self.assertEqual(len(schematic['nodes']), 1)
+        root = schematic['nodes'][0]
+        self.assertEqual(root['self']['type'], 'pipeline')
+        self.assertEqual(root.get('mode'), 'branch')
+        self.assertEqual(len(root['children']), 2)
+        self.assertTrue(any(child['self']['type'] == 'output' for child in root['children']))
+        self.assertTrue(any(child['self'].get('label') == 'PL2' for child in root['children']))
 
 
     def test_traverse_single_transformer(self):
